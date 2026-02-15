@@ -1,24 +1,22 @@
 import os
 import asyncio
 from collections import deque
-
 import yt_dlp
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.enums import ChatMemberStatus
-from pytgcalls import PyTgCalls
-from pytgcalls.types.input_stream import AudioPiped
-from pytgcalls.exceptions import NoActiveGroupCall
+from tgcaller import TgCaller
+from tgcaller.advanced import YouTubeStreamer
 
-# ---------- НАСТРОЙКИ ----------
+# ========== НАСТРОЙКИ ==========
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
 
-if not API_ID or not API_HASH or not SESSION_STRING:
-    raise ValueError("API_ID, API_HASH и SESSION_STRING должны быть заданы в переменных окружения")
+if not all([API_ID, API_HASH, SESSION_STRING]):
+    raise ValueError("API_ID, API_HASH и SESSION_STRING обязательны!")
 
-# ---------- ИНИЦИАЛИЗАЦИЯ ----------
+# ========== ИНИЦИАЛИЗАЦИЯ ==========
 app = Client(
     name="userbot",
     session_string=SESSION_STRING,
@@ -26,15 +24,16 @@ app = Client(
     api_hash=API_HASH
 )
 
-vc = PyTgCalls(app)
+# Инициализируем TgCaller
+caller = TgCaller(app)
 
-# Очередь треков: каждый элемент — (название, путь_к_файлу)
+# Очередь треков: (название, путь_к_файлу)
 queue = deque()
 playing = False
 current_track = None
-current_chat_id = None   # ID чата, в котором происходит воспроизведение
+current_chat_id = None
 
-# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 async def is_admin(chat_id, user_id):
     try:
         member = await app.get_chat_member(chat_id, user_id)
@@ -43,10 +42,7 @@ async def is_admin(chat_id, user_id):
         return False
 
 def download_audio(query, output_name):
-    """
-    Скачивает аудио с YouTube, конвертирует в mp3.
-    Возвращает (путь_к_файлу, название_трека)
-    """
+    """Скачивает аудио с YouTube, конвертирует в mp3."""
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': f'{output_name}.%(ext)s',
@@ -69,11 +65,12 @@ def download_audio(query, output_name):
         return filename, title
 
 async def play_next():
+    """Воспроизводит следующий трек из очереди."""
     global playing, current_track, current_chat_id
+    
     if not queue:
         playing = False
         current_track = None
-        # можно оставить или покинуть голосовой чат
         return
 
     track_name, file_path = queue.popleft()
@@ -81,35 +78,31 @@ async def play_next():
     playing = True
 
     try:
-        # Предполагаем, что мы уже присоединились к голосовому чату
-        await vc.play(
-            current_chat_id,
-            AudioPiped(file_path)
-        )
+        await caller.play(current_chat_id, file_path)
         await app.send_message(
             current_chat_id,
             f"🎵 **Сейчас играет:** {track_name}"
         )
-    except NoActiveGroupCall:
-        await app.send_message(
-            current_chat_id,
-            "❌ Нет активного голосового чата. Используйте /join, чтобы присоединиться."
-        )
-        playing = False
     except Exception as e:
-        await app.send_message(current_chat_id, f"❌ Ошибка воспроизведения: {e}")
+        await app.send_message(current_chat_id, f"❌ Ошибка: {e}")
         playing = False
-        # пробуем следующий трек
-        await play_next()
+        await play_next()  # пробуем следующий
 
-# ---------- КОМАНДЫ ----------
+# ========== ОБРАБОТЧИКИ СОБЫТИЙ ==========
+@caller.on_stream_end()
+async def on_stream_end(update):
+    """Когда трек закончился — играем следующий."""
+    await play_next()
+
+# ========== КОМАНДЫ ==========
 @app.on_message(filters.command("join") & filters.group)
 async def join_vc(client: Client, message: Message):
-    """Присоединяется к голосовому чату текущей группы."""
+    """Присоединяется к голосовому чату."""
     global current_chat_id
     chat_id = message.chat.id
+    
     try:
-        await vc.join(chat_id)
+        await caller.join_call(chat_id)
         current_chat_id = chat_id
         await message.reply("✅ Присоединился к голосовому чату!")
     except Exception as e:
@@ -132,7 +125,6 @@ async def play_command(client: Client, message: Message):
     status_msg = await message.reply("🔍 Ищу трек...")
 
     try:
-        # Скачиваем аудио
         file_path, title = download_audio(query, f"track_{message.id}")
         queue.append((title, file_path))
 
@@ -147,12 +139,13 @@ async def play_command(client: Client, message: Message):
 async def skip_command(client: Client, message: Message):
     """Пропускает текущий трек."""
     global playing
-    if not playing:
+    
+    if not playing or not current_chat_id:
         await message.reply("⚠️ Сейчас ничего не играет.")
         return
 
     try:
-        await vc.stop(current_chat_id)
+        await caller.stop(current_chat_id)
         await message.reply("⏭ Трек пропущен.")
         await play_next()
     except Exception as e:
@@ -161,11 +154,12 @@ async def skip_command(client: Client, message: Message):
 @app.on_message(filters.command("pause") & filters.group)
 async def pause_command(client: Client, message: Message):
     """Приостанавливает воспроизведение."""
-    if not playing:
+    if not playing or not current_chat_id:
         await message.reply("⚠️ Сейчас ничего не играет.")
         return
+    
     try:
-        await vc.pause(current_chat_id)
+        await caller.pause(current_chat_id)
         await message.reply("⏸ Воспроизведение приостановлено.")
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
@@ -173,49 +167,54 @@ async def pause_command(client: Client, message: Message):
 @app.on_message(filters.command("resume") & filters.group)
 async def resume_command(client: Client, message: Message):
     """Возобновляет воспроизведение."""
+    if not current_chat_id:
+        await message.reply("❌ Я не в голосовом чате.")
+        return
+    
     try:
-        await vc.resume(current_chat_id)
+        await caller.resume(current_chat_id)
         await message.reply("▶ Воспроизведение возобновлено.")
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
 
 @app.on_message(filters.command("stop") & filters.group)
 async def stop_command(client: Client, message: Message):
-    """Останавливает воспроизведение и очищает очередь."""
+    """Останавливает и очищает очередь."""
     global playing, current_track
+    
     queue.clear()
-    if playing:
+    if playing and current_chat_id:
         try:
-            await vc.stop(current_chat_id)
+            await caller.stop(current_chat_id)
         except:
             pass
         playing = False
         current_track = None
-        await message.reply("⏹ Воспроизведение остановлено, очередь очищена.")
+        await message.reply("⏹ Остановлено, очередь очищена.")
     else:
         await message.reply("⚠️ Сейчас ничего не играет.")
 
 @app.on_message(filters.command("queue") & filters.group)
 async def queue_command(client: Client, message: Message):
-    """Показывает текущую очередь."""
+    """Показывает очередь."""
     if not queue:
         await message.reply("📭 Очередь пуста.")
         return
-    lines = []
-    for i, (title, _) in enumerate(queue, 1):
-        lines.append(f"{i}. {title}")
-    text = "**Очередь:**\n" + "\n".join(lines)
-    await message.reply(text)
+    
+    lines = [f"{i}. {title}" for i, (title, _) in enumerate(queue, 1)]
+    await message.reply("**Очередь:**\n" + "\n".join(lines))
 
 @app.on_message(filters.command("leave") & filters.group)
 async def leave_vc(client: Client, message: Message):
     """Покидает голосовой чат."""
     global current_chat_id, playing, current_track
+    
     if not current_chat_id:
         await message.reply("❌ Я не в голосовом чате.")
         return
+    
     try:
-        await vc.leave(current_chat_id)
+        await caller.leave_call(current_chat_id)
         current_chat_id = None
         queue.clear()
         playing = False
@@ -224,6 +223,6 @@ async def leave_vc(client: Client, message: Message):
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
 
-# ---------- ЗАПУСК ----------
+# ========== ЗАПУСК ==========
 if __name__ == "__main__":
     app.run()
