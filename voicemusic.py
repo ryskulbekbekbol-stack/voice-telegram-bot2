@@ -7,6 +7,7 @@ from pyrogram.types import Message
 from pyrogram.enums import ChatMemberStatus
 from pytgcalls import PyTgCalls
 from pytgcalls.types.input_stream import AudioPiped
+from pytgcalls.exceptions import NoActiveGroupCall
 
 # ========== НАСТРОЙКИ ==========
 API_ID = int(os.environ.get("API_ID", 0))
@@ -82,7 +83,7 @@ async def play_next():
             f"🎵 **Сейчас играет:** {track_name}"
         )
     except Exception as e:
-        await app.send_message(current_chat_id, f"❌ Ошибка: {e}")
+        await app.send_message(current_chat_id, f"❌ Ошибка воспроизведения: {e}")
         playing = False
         await play_next()
 
