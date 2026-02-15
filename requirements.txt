@@ -3,3 +3,4 @@ tgcrypto
 pytgcalls
 yt-dlp
 imageio-ffmpeg
+python-telegram-bot
