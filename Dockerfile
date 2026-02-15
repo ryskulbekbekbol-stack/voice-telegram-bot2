@@ -2,7 +2,6 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Устанавливаем системные зависимости и ffmpeg
 RUN apt-get update && apt-get install -y \
     gcc \
     build-essential \
@@ -15,5 +14,4 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY . .
 
-# Замените "bot.py" на имя вашего главного файла
 CMD ["python", "voicemusic.py"]
