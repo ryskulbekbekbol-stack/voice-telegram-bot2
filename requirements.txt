@@ -2,4 +2,4 @@ pyrogram==2.0.106
 tgcrypto==1.2.5
 yt-dlp
 imageio-ffmpeg
-tgcaller[all]
+pytgcalls==3.0.0.dev24
