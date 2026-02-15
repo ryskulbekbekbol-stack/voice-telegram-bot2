@@ -1,5 +1,5 @@
 pyrogram==2.0.106
 tgcrypto==1.2.5
-pytgcalls==3.1.2        # или pytgcalls
+pytgcalls==3.1.2        
 yt-dlp
 imageio-ffmpeg
