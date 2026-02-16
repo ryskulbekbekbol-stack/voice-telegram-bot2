@@ -1,9 +1,7 @@
 FROM python:3.11-slim
 
-# Только ffmpeg нужен, компиляторы НЕ нужны!
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+# Устанавливаем только ffmpeg (необходим для yt-dlp и tgcaller)
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
