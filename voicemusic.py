@@ -1,164 +1,112 @@
 import os
 import asyncio
-import aiohttp
+import yt_dlp
 import subprocess
+
 from pyrogram import Client, filters
 from tgcaller import TgCaller
 
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-SESSION_STRING = os.environ.get("SESSION_STRING")
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+SESSION_STRING = os.environ["SESSION_STRING"]
 
-# Проверка ffmpeg
+# ===== проверка ffmpeg =====
 try:
-    subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True)
-    print("✅ FFmpeg установлен")
+    subprocess.run(["ffmpeg", "-version"], capture_output=True)
+    print("✅ ffmpeg ok")
 except:
-    print("⚠️ FFmpeg не найден")
+    print("❌ ffmpeg не найден")
 
-app = Client("userbot", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH, in_memory=True)
+app = Client(
+    "userbot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    session_string=SESSION_STRING,
+    in_memory=True
+)
+
 vc = TgCaller(app)
+started = False
 
-_vc_started = False
 
-async def ensure_vc_started():
-    global _vc_started
-    if not _vc_started:
-        print("▶️ Запуск TgCaller...")
+async def ensure_started():
+    global started
+    if not started:
         await vc.start()
-        _vc_started = True
+        started = True
         print("✅ TgCaller запущен")
 
-# ========== СПИСОК API ДЛЯ КОНВЕРТАЦИИ ==========
-API_LIST = [
-    {
-        'name': 'loader.to',
-        'url': 'https://loader.to/api/convert/',
-        'params': {'url': None, 'format': 'mp3'},
-        'file_field': 'downloadUrl'  # предположительно
 
+# ===== загрузка =====
+async def download(query):
+    loop = asyncio.get_event_loop()
+    name = f"song_{os.urandom(4).hex()}.mp3"
+
+    opts = {
+        "format": "bestaudio",
+        "outtmpl": name,
+        "noplaylist": True,
+        "quiet": True
     }
-]
 
-async def download_audio_api(query):
-    """
-    Перебирает несколько API для скачивания аудио.
-    """
-    print(f"Начинаю скачивание через API: {query}")
+    def _dl():
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([f"ytsearch1:{query}"])
 
-    for api in API_LIST:
-        print(f"🔄 Пробую API: {api['name']}")
-        try:
-            async with aiohttp.ClientSession() as session:
-                params = api['params'].copy()
-                params['url'] = query
+    await loop.run_in_executor(None, _dl)
 
-                async with session.get(api['url'], params=params, timeout=30) as resp:
-                    if resp.status != 200:
-                        print(f"   Код ответа {resp.status}")
-                        continue
+    if not os.path.exists(name):
+        raise Exception("download failed")
 
-                    # Если API возвращает JSON с ссылкой на файл
-                    if api['file_field']:
-                        data = await resp.json()
-                        file_url = data.get(api['file_field'])
-                        if not file_url:
-                            continue
-                        # Скачиваем файл по полученной ссылке
-                        async with session.get(file_url) as file_resp:
-                            if file_resp.status != 200:
-                                continue
-                            filename = f"audio_{os.urandom(4).hex()}.mp3"
-                            with open(filename, 'wb') as f:
-                                while True:
-                                    chunk = await file_resp.content.read(8192)
-                                    if not chunk:
-                                        break
-                                    f.write(chunk)
-                    else:
-                        # Прямой файл в ответе (как в ytdl.uno)
-                        content_disp = resp.headers.get('Content-Disposition', '')
-                        if 'filename=' in content_disp:
-                            filename = content_disp.split('filename=')[-1].strip('"')
-                        else:
-                            filename = f"audio_{os.urandom(4).hex()}.mp3"
-                        with open(filename, 'wb') as f:
-                            while True:
-                                chunk = await resp.content.read(8192)
-                                if not chunk:
-                                    break
-                                f.write(chunk)
+    return name
 
-                    file_size = os.path.getsize(filename)
-                    print(f"✅ Скачано через {api['name']}: {filename}, размер: {file_size} байт")
-                    return filename
 
-        except Exception as e:
-            print(f"   Ошибка: {e}")
-            continue
-
-    raise Exception("Все API недоступны")
-
-# ========== КОМАНДА /play ==========
-@app.on_message(filters.command("play") & (filters.group | filters.channel))
-async def play_music(client, message):
-    if len(message.command) < 2:
-        await message.reply("Использование: /play <YouTube URL>")
+# ===== play =====
+@app.on_message(filters.command("play") & filters.group)
+async def play(_, msg):
+    if len(msg.command) < 2:
+        await msg.reply("Используй: /play название")
         return
 
-    query = message.command[1]
-    status = await message.reply("🔄 Загружаю через API...")
+    q = " ".join(msg.command[1:])
+    m = await msg.reply("🔄 качаю...")
 
     try:
-        filename = await download_audio_api(query)
+        file = await download(q)
     except Exception as e:
-        await status.edit(f"❌ Ошибка загрузки: {e}")
+        await m.edit(f"❌ ошибка загрузки: {e}")
+        return
+
+    await ensure_started()
+
+    chat = msg.chat.id
+
+    try:
+        if not vc.is_connected(chat):
+            await vc.join_call(chat)
+    except Exception as e:
+        await m.edit(f"❌ войс ошибка: {e}")
         return
 
     try:
-        await ensure_vc_started()
+        await vc.play(chat, file)
+        await m.edit(f"🎵 играет: {q}")
     except Exception as e:
-        await status.edit("❌ Ошибка инициализации голосового модуля")
-        try:
-            os.remove(filename)
-        except:
-            pass
-        return
+        await m.edit(f"❌ play ошибка: {e}")
 
-    chat_id = message.chat.id
 
-    try:
-        if not vc.is_connected(chat_id):
-            print(f"Подключаюсь к чату {chat_id}")
-            await vc.join_call(chat_id)
-    except Exception as e:
-        await status.edit(f"❌ Не удалось подключиться: {e}")
-        try:
-            os.remove(filename)
-        except:
-            pass
-        return
+# ===== stop =====
+@app.on_message(filters.command("stop") & filters.group)
+async def stop(_, msg):
+    chat = msg.chat.id
 
-    try:
-        await vc.play(chat_id, filename)
-        await status.edit(f"🎵 Сейчас играет: {query}")
-    except Exception as e:
-        await status.edit(f"❌ Ошибка воспроизведения: {e}")
-        try:
-            os.remove(filename)
-        except:
-            pass
-
-@app.on_message(filters.command("stop") & (filters.group | filters.channel))
-async def stop_music(client, message):
-    chat_id = message.chat.id
-    if vc.is_connected(chat_id):
-        await vc.stop_playback(chat_id)
-        await vc.leave_call(chat_id)
-        await message.reply("⏹️ Воспроизведение остановлено.")
+    if vc.is_connected(chat):
+        await vc.stop_playback(chat)
+        await vc.leave_call(chat)
+        await msg.reply("⏹ остановлено")
     else:
-        await message.reply("❌ Я не в голосовом чате.")
+        await msg.reply("не в войсе")
 
-if __name__ == "__main__":
-    print("🚀 Бот запускается (мульти-API)...")
-    app.run()
+
+print("🚀 старт")
+app.run()
