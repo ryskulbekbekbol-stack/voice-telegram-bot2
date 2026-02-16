@@ -69,7 +69,7 @@ def download_audio(query):
         # Пробуем несколько клиентов (web поддерживает куки)
         'extractor_args': {'youtube': {'player_client': ['web', 'android', 'ios', 'tv']}},
         # Если ваш IP заблокирован – раскомментируйте и укажите рабочий прокси
-        # 'proxy': 'http://185.189.255.200:8000',
+        # 'proxy': 'http://65.108.159.129',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         # Дополнительные заголовки как у браузера
         'headers': {
