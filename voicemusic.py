@@ -1,15 +1,17 @@
 import os
 import asyncio
-import yt_dlp
 import subprocess
 import glob
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+import yt_dlp
 from pyrogram import Client, filters
+from pyrogram.types import Message
+from pyrogram.enums import ChatMemberStatus
 from tgcaller import TgCaller
+import config
 
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
-SESSION_STRING = os.environ.get("SESSION_STRING")
-
+# ========== ПРОВЕРКА ЗАВИСИМОСТЕЙ ==========
 def check_deps():
     ok = True
     try:
@@ -26,9 +28,30 @@ def check_deps():
         ok = False
     return ok
 
-app = Client("userbot", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH, in_memory=True)
+# ========== ИНИЦИАЛИЗАЦИЯ ==========
+os.makedirs(config.DOWNLOAD_PATH, exist_ok=True)
+
+# Подключаемся к Telegram как юзер
+app = Client(
+    "userbot",
+    session_string=config.SESSION_STRING,
+    api_id=config.API_ID,
+    api_hash=config.API_HASH,
+    in_memory=True
+)
+
+# Подключаем голосовой модуль
 vc = TgCaller(app)
 
+# Подключаемся к Spotify API
+sp = spotipy.Spotify(
+    auth_manager=SpotifyClientCredentials(
+        client_id=config.SPOTIFY_CLIENT_ID,
+        client_secret=config.SPOTIFY_CLIENT_SECRET
+    )
+)
+
+# Флаг запуска TgCaller
 _vc_started = False
 
 async def ensure_vc_started():
@@ -39,130 +62,158 @@ async def ensure_vc_started():
         _vc_started = True
         print("✅ TgCaller запущен")
 
-def download_audio(query):
-    print(f"\n=== Начинаю скачивание: {query} ===")
-    print(f"cookies.txt существует: {os.path.exists('cookies.txt')}")
-
-    ydl_opts = {
-        'format': 'bestaudio*',
-        'outtmpl': 'audio.%(ext)s',
-        'cookiefile': 'cookies.txt',
-        'quiet': False,
-        'verbose': True,
-        'no_warnings': False,
-        'ignoreerrors': True,
-        'extract_flat': False,
-        'nocheckcertificate': True,
-        'prefer_ffmpeg': True,
-        'source_address': '91.247.59.86',
-        
-        # ⚠️⚠️⚠️ КЛЮЧЕВЫЕ ИЗМЕНЕНИЯ ⚠️⚠️⚠️
-        # 1. Явно указываем использовать Node.js
-        'js_runtime': 'node',
-        # 2. Включаем Node.js в список доступных рантаймов
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['web', 'android', 'ios', 'tv'],
-                'js_runner': 'node'  # принудительно используем Node.js
+# ========== ФУНКЦИИ ПОИСКА ==========
+def search_spotify(query: str):
+    """Ищет треки в Spotify и возвращает первый результат"""
+    try:
+        results = sp.search(q=query, type='track', limit=1)
+        if results['tracks']['items']:
+            item = results['tracks']['items'][0]
+            return {
+                'name': item['name'],
+                'artist': item['artists'][0]['name'],
+                'duration': item['duration_ms'] // 1000,
+                'url': item['external_urls']['spotify']
             }
-        },
-        # 3. Указываем, что Node.js разрешен
-        'allow_unsupported_runtimes': True,
-        
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'headers': {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-        }
-    }
+    except Exception as e:
+        print(f"Ошибка Spotify: {e}")
+    return None
 
+def search_youtube(query: str):
+    """Ищет на YouTube и возвращает информацию для скачивания"""
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'default_search': 'ytsearch',
+        'source_address': '0.0.0.0'
+    }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=True)
-            if info is None:
-                raise Exception("yt-dlp не смог получить информацию о видео")
-            filename = ydl.prepare_filename(info)
-            if not os.path.exists(filename):
-                files = glob.glob("audio.*")
-                if files:
-                    filename = files[0]
-                else:
-                    raise FileNotFoundError("Не удалось найти скачанный файл")
-            print(f"✅ Скачано: {filename}, размер: {os.path.getsize(filename)} байт")
-            return filename
+            info = ydl.extract_info(f"ytsearch:{query}", download=False)
+            if info and info.get('entries'):
+                video = info['entries'][0]
+                return {
+                    'title': video.get('title'),
+                    'url': video.get('webpage_url'),
+                    'duration': video.get('duration')
+                }
     except Exception as e:
-        print(f"❌ Ошибка в yt-dlp: {e}")
-        raise
+        print(f"Ошибка YouTube: {e}")
+    return None
 
-@app.on_message(filters.command("play") & (filters.group | filters.channel))
-async def play_music(client, message):
+def download_audio_from_youtube(url: str):
+    """Скачивает аудио с YouTube и возвращает имя файла"""
+    ydl_opts = {
+        'format': 'bestaudio*',
+        'outtmpl': os.path.join(config.DOWNLOAD_PATH, '%(title)s.%(ext)s'),
+        'quiet': True,
+        'no_warnings': True,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,  # опционально
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
+        # конвертируем в mp3 (если не был mp3)
+        filename = filename.rsplit('.', 1)[0] + '.mp3'
+        return filename
+
+# ========== КОМАНДЫ (доступны только вам) ==========
+@app.on_message(filters.command("play") & filters.me)
+async def play_command(client: Client, message: Message):
+    """Использование: /play <название трека>"""
     if len(message.command) < 2:
-        await message.reply("Использование: /play <YouTube URL>")
+        await message.edit("❌ Укажите название трека")
         return
 
-    query = message.command[1]
-    status = await message.reply("🔄 Загружаю...")
+    query = ' '.join(message.command[1:])
+    status = await message.edit("🔍 Ищу на Spotify...")
 
-    if not check_deps():
-        await status.edit("❌ Отсутствуют ffmpeg или nodejs")
+    # Сначала ищем в Spotify
+    spotify_track = search_spotify(query)
+    if spotify_track:
+        search_query = f"{spotify_track['name']} {spotify_track['artist']}"
+        await status.edit(f"🎵 Нашёл на Spotify: {spotify_track['name']} - {spotify_track['artist']}\n🔍 Ищу на YouTube...")
+    else:
+        search_query = query
+        await status.edit("🔍 Ищу прямо на YouTube...")
+
+    # Ищем на YouTube
+    yt_info = search_youtube(search_query)
+    if not yt_info:
+        await status.edit("❌ Ничего не найдено")
         return
+
+    await status.edit(f"⬇️ Скачиваю: {yt_info['title']}")
 
     try:
-        filename = await asyncio.get_event_loop().run_in_executor(None, download_audio, query)
+        # Скачиваем аудио
+        filename = await asyncio.get_event_loop().run_in_executor(None, download_audio_from_youtube, yt_info['url'])
     except Exception as e:
         await status.edit(f"❌ Ошибка загрузки: {e}")
         return
 
-    try:
-        await ensure_vc_started()
-    except Exception as e:
-        await status.edit("❌ Ошибка инициализации голосового модуля")
-        try:
-            os.remove(filename)
-        except:
-            pass
+    # Запускаем голосовой модуль
+    if not check_deps():
+        await status.edit("❌ Отсутствуют ffmpeg или nodejs")
+        os.remove(filename)
         return
 
-    chat_id = message.chat.id
+    await ensure_vc_started()
 
+    chat_id = message.chat.id
+    # Подключаемся к голосовому чату
     try:
         if not vc.is_connected(chat_id):
-            print(f"Подключаюсь к чату {chat_id}")
             await vc.join_call(chat_id)
     except Exception as e:
         await status.edit(f"❌ Не удалось подключиться: {e}")
-        try:
-            os.remove(filename)
-        except:
-            pass
+        os.remove(filename)
         return
 
+    # Воспроизводим
     try:
         await vc.play(chat_id, filename)
-        await status.edit(f"🎵 Сейчас играет: {query}")
+        await status.edit(f"🎵 Сейчас играет: {yt_info['title']}")
     except Exception as e:
         await status.edit(f"❌ Ошибка воспроизведения: {e}")
-        try:
-            os.remove(filename)
-        except:
-            pass
+    finally:
+        # Удаляем файл после окончания (можно добавить задержку, но для простоты удалим сейчас)
+        # В реальности нужно дождаться окончания трека или добавить событие.
+        # Пока удалим, чтобы не засорять диск.
+        os.remove(filename)
 
-@app.on_message(filters.command("stop") & (filters.group | filters.channel))
-async def stop_music(client, message):
+@app.on_message(filters.command("stop") & filters.me)
+async def stop_command(client: Client, message: Message):
     chat_id = message.chat.id
     if vc.is_connected(chat_id):
         await vc.stop_playback(chat_id)
         await vc.leave_call(chat_id)
-        await message.reply("⏹️ Остановлено.")
+        await message.edit("⏹️ Воспроизведение остановлено")
     else:
-        await message.reply("❌ Не в голосовом чате.")
+        await message.edit("❌ Я не в голосовом чате")
 
-def exception_handler(loop, context):
-    print(f"⚠️ Поймано исключение: {context}")
+@app.on_message(filters.command("spotify") & filters.me)
+async def spotify_search_command(client: Client, message: Message):
+    """Ищет трек в Spotify и возвращает ссылку (без скачивания)"""
+    if len(message.command) < 2:
+        await message.edit("Укажите название")
+        return
+    query = ' '.join(message.command[1:])
+    status = await message.edit("🔍 Ищу на Spotify...")
+    track = search_spotify(query)
+    if track:
+        text = f"🎵 **{track['name']}**\n👤 {track['artist']}\n💿 [Слушать на Spotify]({track['url']})"
+        await status.edit(text, disable_web_page_preview=True)
+    else:
+        await status.edit("❌ Не найдено")
 
-loop = asyncio.get_event_loop()
-loop.set_exception_handler(exception_handler)
-
+# ========== ЗАПУСК ==========
 if __name__ == "__main__":
-    print("🚀 Бот запускается...")
+    print("🚀 Spotify юзербот запускается...")
     app.run()
