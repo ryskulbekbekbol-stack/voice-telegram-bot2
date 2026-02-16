@@ -3,45 +3,61 @@ import asyncio
 import yt_dlp
 import subprocess
 from pyrogram import Client, filters
-from pyrogram.handlers import RawUpdateHandler
 from tgcaller import TgCaller
 
+# ========== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION_STRING = os.environ.get("SESSION_STRING")
 
-# Проверка ffmpeg (для отладки)
+# Проверка наличия ffmpeg (для отладки)
 try:
     subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True)
     print("✅ FFmpeg установлен")
 except Exception as e:
-    print("❌ FFmpeg не найден:", e)
+    print("❌ FFmpeg не найден. Убедитесь, что он установлен в контейнере.")
+    # Не выходим, возможно, tgcaller справится без него, но лучше установить.
 
-app = Client("userbot", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH, in_memory=True)
+# ========== ИНИЦИАЛИЗАЦИЯ КЛИЕНТА И TgCaller ==========
+app = Client(
+    "userbot",
+    session_string=SESSION_STRING,
+    api_id=API_ID,
+    api_hash=API_HASH,
+    in_memory=True  # не храним сессию на диске
+)
 vc = TgCaller(app)
 
 # Флаг, что TgCaller запущен
-vc_started = False
+_vc_started = False
 
 async def ensure_vc_started():
-    global vc_started
-    if not vc_started:
+    """Гарантирует, что TgCaller запущен."""
+    global _vc_started
+    if not _vc_started:
         print("▶️ Запуск TgCaller...")
         await vc.start()
-        vc_started = True
+        _vc_started = True
         print("✅ TgCaller запущен")
 
+# ========== ФУНКЦИЯ СКАЧИВАНИЯ АУДИО С YouTube ==========
 def download_audio(query):
+    """
+    Скачивает аудио с YouTube (по ссылке или поисковому запросу).
+    Использует файл cookies.txt для обхода блокировок.
+    """
     print(f"Начинаю скачивание: {query}")
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'audio.%(ext)s',
+        'cookiefile': 'cookies.txt',          # <- файл с куками
         'quiet': False,
         'no_warnings': False,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=True)
         filename = ydl.prepare_filename(info)
+        # Если файл не найден (например, расширение изменилось), ищем audio.*
         if not os.path.exists(filename):
             import glob
             files = glob.glob("audio.*")
@@ -49,12 +65,14 @@ def download_audio(query):
                 filename = files[0]
             else:
                 raise FileNotFoundError("Не удалось найти скачанный файл")
-        print(f"✅ Скачано: {filename}, размер: {os.path.getsize(filename)}")
+        print(f"✅ Скачано: {filename}, размер: {os.path.getsize(filename)} байт")
         return filename
 
+# ========== ОБРАБОТЧИК КОМАНДЫ /play ==========
 @app.on_message(filters.command("play") & (filters.group | filters.channel))
 async def play_music(client, message):
     print(f"Команда play в чате {message.chat.id} от {message.from_user.id}")
+
     if len(message.command) < 2:
         await message.reply("Использование: /play <YouTube URL или запрос>")
         return
@@ -62,6 +80,7 @@ async def play_music(client, message):
     query = message.command[1]
     status = await message.reply("🔄 Загружаю...")
 
+    # 1. Скачиваем аудио
     try:
         filename = await asyncio.get_event_loop().run_in_executor(None, download_audio, query)
     except Exception as e:
@@ -69,15 +88,22 @@ async def play_music(client, message):
         await status.edit(f"❌ Ошибка загрузки: {e}")
         return
 
-    # Убедимся, что TgCaller запущен
+    # 2. Убеждаемся, что TgCaller запущен
     try:
         await ensure_vc_started()
     except Exception as e:
         print(f"Ошибка запуска TgCaller: {e}")
-        await status.edit("❌ Ошибка инициализации TgCaller")
+        await status.edit("❌ Ошибка инициализации голосового модуля")
+        # Удаляем файл, чтобы не засорять диск
+        try:
+            os.remove(filename)
+        except:
+            pass
         return
 
     chat_id = message.chat.id
+
+    # 3. Подключаемся к голосовому чату, если ещё не подключены
     try:
         if not vc.is_connected(chat_id):
             print(f"Подключаюсь к чату {chat_id}")
@@ -94,6 +120,7 @@ async def play_music(client, message):
             pass
         return
 
+    # 4. Воспроизводим
     try:
         print(f"Воспроизвожу {filename}")
         await vc.play(chat_id, filename)
@@ -107,19 +134,25 @@ async def play_music(client, message):
         except:
             pass
 
+# ========== ОБРАБОТЧИК КОМАНДЫ /stop ==========
 @app.on_message(filters.command("stop") & (filters.group | filters.channel))
 async def stop_music(client, message):
     chat_id = message.chat.id
     if vc.is_connected(chat_id):
         await vc.stop_playback(chat_id)
         await vc.leave_call(chat_id)
-        await message.reply("⏹️ Остановлено.")
+        await message.reply("⏹️ Воспроизведение остановлено.")
     else:
-        await message.reply("❌ Не в голосовом чате.")
+        await message.reply("❌ Я не в голосовом чате.")
 
-# Запускаем TgCaller после старта клиента
-@app.on_start()
-async def start_vc(client):
-    await ensure_vc_started()
+# ========== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ИСКЛЮЧЕНИЙ ==========
+def exception_handler(loop, context):
+    print(f"Поймано исключение в цикле событий: {context}")
 
-app.run()
+loop = asyncio.get_event_loop()
+loop.set_exception_handler(exception_handler)
+
+# ========== ЗАПУСК ==========
+if __name__ == "__main__":
+    print("🚀 Бот запускается...")
+    app.run()
