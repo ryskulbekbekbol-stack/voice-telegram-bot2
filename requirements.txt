@@ -1,4 +1,4 @@
 pyrogram==2.0.106
 tgcaller==1.0.3
-yt-dlp
+yt-dlp@latest
 tgcrypto==1.2.5
