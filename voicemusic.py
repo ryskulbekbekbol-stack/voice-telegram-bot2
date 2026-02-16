@@ -57,7 +57,7 @@ def search_youtube(query: str):
         'quiet': True,
         'no_warnings': True,
         'default_search': 'ytsearch',
-        'source_address': '0.0.0.0',
+        'source_address': '91.247.59.86',
         'js_runtime': 'node',                       # принудительно используем Node.js
         'extractor_args': {'youtube': {'js_runner': 'node'}},
         'allow_unsupported_runtimes': True,
