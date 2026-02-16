@@ -1,15 +1,14 @@
 FROM python:3.11-slim
 
-# Устанавливаем системные пакеты: ffmpeg, nodejs, npm, curl
+# Устанавливаем ffmpeg и Node.js через apt (проверяем пути)
 RUN apt-get update && apt-get install -y \
-    curl \
     ffmpeg \
     nodejs \
     npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Проверка установки (будет в логах сборки)
-RUN node --version && npm --version && ffmpeg -version
+# Проверка: выводим версию и путь Node.js (будет в логах сборки)
+RUN node --version && which node && npm --version && ffmpeg -version
 
 WORKDIR /app
 
