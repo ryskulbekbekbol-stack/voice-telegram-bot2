@@ -1,21 +1,27 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
-# Устанавливаем компиляторы и заголовки (нужны для сборки некоторых пакетов)
+# Устанавливаем системные пакеты для компиляции
 RUN apt-get update && apt-get install -y \
-    gcc \
+    build-essential \
+    cmake \
     python3-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswresample-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Копируем файлы зависимостей
+# Копируем requirements и обновляем pip
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip
 
-# Устанавливаем Python-пакеты
+# Пытаемся установить зависимости. Если какая-то не соберётся, будет видно в логах
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем остальной код
 COPY . .
 
-# Команда запуска (замените на вашу)
+# Команда запуска (предположим, ваш файл называется main.py)
 CMD ["python", "voicemusic.py"]
