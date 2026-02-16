@@ -10,13 +10,12 @@ API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION_STRING = os.environ.get("SESSION_STRING")
 
-# Проверка наличия ffmpeg (для отладки)
+# Проверка наличия ffmpeg
 try:
     subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True)
     print("✅ FFmpeg установлен")
-except Exception as e:
-    print("❌ FFmpeg не найден. Убедитесь, что он установлен в контейнере.")
-    # Не выходим, возможно, tgcaller справится без него, но лучше установить.
+except Exception:
+    print("⚠️ FFmpeg не найден. Убедитесь, что он установлен в контейнере.")
 
 # ========== ИНИЦИАЛИЗАЦИЯ КЛИЕНТА И TgCaller ==========
 app = Client(
@@ -24,15 +23,13 @@ app = Client(
     session_string=SESSION_STRING,
     api_id=API_ID,
     api_hash=API_HASH,
-    in_memory=True  # не храним сессию на диске
+    in_memory=True
 )
 vc = TgCaller(app)
 
-# Флаг, что TgCaller запущен
 _vc_started = False
 
 async def ensure_vc_started():
-    """Гарантирует, что TgCaller запущен."""
     global _vc_started
     if not _vc_started:
         print("▶️ Запуск TgCaller...")
@@ -48,11 +45,12 @@ def download_audio(query):
     """
     print(f"Начинаю скачивание: {query}")
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio*',                     # наиболее совместимый формат
         'outtmpl': 'audio.%(ext)s',
-        'cookiefile': 'cookies.txt',          # <- файл с куками
+        'cookiefile': 'cookies.txt',                # файл с куками должен лежать рядом
         'quiet': False,
         'no_warnings': False,
+        'extract_flat': False,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=True)
@@ -94,7 +92,6 @@ async def play_music(client, message):
     except Exception as e:
         print(f"Ошибка запуска TgCaller: {e}")
         await status.edit("❌ Ошибка инициализации голосового модуля")
-        # Удаляем файл, чтобы не засорять диск
         try:
             os.remove(filename)
         except:
@@ -109,8 +106,6 @@ async def play_music(client, message):
             print(f"Подключаюсь к чату {chat_id}")
             await vc.join_call(chat_id)
             print("✅ Подключено")
-        else:
-            print("Уже подключено")
     except Exception as e:
         print(f"Ошибка подключения: {e}")
         await status.edit(f"❌ Не удалось подключиться: {e}")
