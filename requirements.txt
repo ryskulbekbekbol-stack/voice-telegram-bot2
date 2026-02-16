@@ -2,5 +2,4 @@ pyrogram==2.0.106
 tgcrypto==1.2.5
 yt-dlp
 imageio-ffmpeg
-git+https://github.com/MarshalX/tgcalls.git@v2.0.0
 pytgcalls==2.1.0
