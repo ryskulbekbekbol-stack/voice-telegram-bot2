@@ -9,10 +9,21 @@ API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION_STRING = os.environ.get("SESSION_STRING")
 
-app = Client("userbot", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH)
+# Глобальный обработчик непойманных исключений (чтобы бот не падал)
+def exception_handler(loop, context):
+    print(f"Поймано исключение в цикле событий: {context}")
+
+app = Client(
+    "userbot",
+    session_string=SESSION_STRING,
+    api_id=API_ID,
+    api_hash=API_HASH,
+    in_memory=True  # не сохраняет кэш на диск, чтобы избежать старых ID
+)
 vc = TgCaller(app)
 
 def download_audio(query):
+    """Скачивает аудио с YouTube, возвращает имя файла"""
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'audio.%(ext)s',
@@ -41,20 +52,20 @@ async def play_music(client, message):
     status = await message.reply("🔄 Загружаю...")
 
     try:
+        # Скачивание в отдельном потоке, чтобы не блокировать асинхронность
         filename = await asyncio.get_event_loop().run_in_executor(None, download_audio, query)
     except Exception as e:
         await status.edit(f"❌ Ошибка загрузки: {e}")
         return
 
-    chat_id = message.chat.id  # всегда свежий ID
+    chat_id = message.chat.id  # всегда свежий ID из текущего чата
 
-    # Подключаемся к голосовому чату
+    # Подключаемся к голосовому чату, если ещё не подключены
     try:
         if not vc.is_connected(chat_id):
             await vc.join_call(chat_id)
     except Exception as e:
         await status.edit(f"❌ Не удалось подключиться: {e}")
-        # Удаляем файл, если он скачан
         try:
             os.remove(filename)
         except:
@@ -82,15 +93,8 @@ async def stop_music(client, message):
     else:
         await message.reply("❌ Я не в голосовом чате.")
 
-# Глобальный обработчик ошибок – бот не упадёт при неверном ID
-@app.on_errors()
-async def handle_errors(client, update, error):
-    if isinstance(error, (PeerIdInvalid, ValueError)) and "Peer id invalid" in str(error):
-        print(f"Пропущена ошибка с неверным ID: {error}")
-        # Просто игнорируем, чтобы бот не крашился
-        return True  # ошибка обработана
-    # Для остальных ошибок можно логировать, но не прекращать работу
-    print(f"Необработанная ошибка: {error}")
-    return True
+# Устанавливаем глобальный обработчик исключений для asyncio (чтобы логировать, но не падать)
+loop = asyncio.get_event_loop()
+loop.set_exception_handler(exception_handler)
 
 app.run()
