@@ -1,31 +1,15 @@
-FROM python:3.11-slim
-
-# Устанавливаем системные зависимости: компиляторы, CMake, библиотеки для аудио/видео, git
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    ninja-build \
-    python3-dev \
-    libavcodec-dev \
-    libavformat-dev \
-    libavutil-dev \
-    libswresample-dev \
-    libopus-dev \
-    libvpx-dev \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+FROM marshalx/tgcalls:latest
 
 WORKDIR /app
 
-# Копируем requirements и обновляем pip
+# Копируем requirements.txt (без git-ссылки на tgcalls!)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Устанавливаем зависимости с подробным выводом (для отладки)
-RUN pip install --no-cache-dir -v -r requirements.txt
+# Устанавливаем остальные Python-зависимости
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем остальной код
+# Копируем весь код проекта
 COPY . .
 
-# Команда запуска (предполагаем, что ваш главный файл называется main.py)
+# Команда запуска (замените main.py на имя вашего файла)
 CMD ["python", "voicemusic.py"]
