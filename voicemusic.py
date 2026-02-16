@@ -6,12 +6,11 @@ import glob
 from pyrogram import Client, filters
 from tgcaller import TgCaller
 
-# ========== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION_STRING = os.environ.get("SESSION_STRING")
 
-# Проверка наличия ffmpeg и nodejs
+# Проверка ffmpeg и nodejs
 try:
     subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True)
     print("✅ FFmpeg установлен")
@@ -24,14 +23,7 @@ try:
 except:
     print("⚠️ Node.js не найден")
 
-# ========== ИНИЦИАЛИЗАЦИЯ КЛИЕНТА И TgCaller ==========
-app = Client(
-    "userbot",
-    session_string=SESSION_STRING,
-    api_id=API_ID,
-    api_hash=API_HASH,
-    in_memory=True
-)
+app = Client("userbot", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH, in_memory=True)
 vc = TgCaller(app)
 
 _vc_started = False
@@ -44,7 +36,7 @@ async def ensure_vc_started():
         _vc_started = True
         print("✅ TgCaller запущен")
 
-# ========== ФУНКЦИЯ СКАЧИВАНИЯ АУДИО С YouTube ==========
+# ========== ФУНКЦИЯ СКАЧИВАНИЯ ==========
 def download_audio(query):
     print(f"Начинаю скачивание: {query}")
     print(f"cookies.txt существует: {os.path.exists('cookies.txt')}")
@@ -61,8 +53,10 @@ def download_audio(query):
         'nocheckcertificate': True,
         'prefer_ffmpeg': True,
         'source_address': '0.0.0.0',
-        # Пробуем несколько клиентов, поддерживающих куки
-        'extractor_args': {'youtube': {'player_client': ['web', 'ios', 'android']}},
+        # ⬇️ ВАЖНО: добавляем поддержку нескольких клиентов (включая web с куками)
+        'extractor_args': {'youtube': {'player_client': ['web', 'android', 'ios']}},
+        # ⬇️ ЕСЛИ НУЖЕН ПРОКСИ — раскомментируйте и укажите свой прокси
+        # 'proxy': 'http://174.138.119.88',
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     }
 
@@ -144,14 +138,13 @@ async def stop_music(client, message):
     else:
         await message.reply("❌ Я не в голосовом чате.")
 
-# ========== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ИСКЛЮЧЕНИЙ ==========
+# ========== ОБРАБОТЧИК ОШИБОК ==========
 def exception_handler(loop, context):
     print(f"Поймано исключение: {context}")
 
 loop = asyncio.get_event_loop()
 loop.set_exception_handler(exception_handler)
 
-# ========== ЗАПУСК ==========
 if __name__ == "__main__":
     print("🚀 Бот запускается...")
     app.run()
