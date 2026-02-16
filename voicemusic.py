@@ -1,112 +1,118 @@
 import os
 import asyncio
-import yt_dlp
 import subprocess
+import yt_dlp
 
 from pyrogram import Client, filters
 from tgcaller import TgCaller
 
+# ===== Переменные окружения =====
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSION_STRING = os.environ["SESSION_STRING"]
 
-# ===== проверка ffmpeg =====
+# ===== Проверка ffmpeg =====
 try:
-    subprocess.run(["ffmpeg", "-version"], capture_output=True)
-    print("✅ ffmpeg ok")
-except:
-    print("❌ ffmpeg не найден")
+    subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+    print("✅ ffmpeg установлен")
+except Exception as e:
+    print("⚠️ ffmpeg не найден, музыка может не играть", e)
 
+# ===== Клиент Pyrogram =====
 app = Client(
     "userbot",
     api_id=API_ID,
     api_hash=API_HASH,
-    session_string=SESSION_STRING,
-    in_memory=True
+    session_string=SESSION_STRING
 )
 
 vc = TgCaller(app)
-started = False
-
+_started = False
 
 async def ensure_started():
-    global started
-    if not started:
+    global _started
+    if not _started:
+        print("▶️ Запуск TgCaller...")
         await vc.start()
-        started = True
+        _started = True
         print("✅ TgCaller запущен")
 
-
-# ===== загрузка =====
-async def download(query):
+# ===== Функция загрузки музыки с конвертацией =====
+async def download_audio(query):
     loop = asyncio.get_event_loop()
-    name = f"song_{os.urandom(4).hex()}.mp3"
+    filename = f"track_{os.urandom(4).hex()}.mp3"
 
-    opts = {
+    ydl_opts = {
         "format": "bestaudio",
-        "outtmpl": name,
+        "outtmpl": filename,
         "noplaylist": True,
+        "postprocessors": [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
         "quiet": True
     }
 
     def _dl():
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([f"ytsearch1:{query}"])
 
     await loop.run_in_executor(None, _dl)
 
-    if not os.path.exists(name):
-        raise Exception("download failed")
+    if not os.path.exists(filename):
+        raise Exception("Файл не скачался")
 
-    return name
+    print("✅ Файл готов:", filename)
+    return filename
 
-
-# ===== play =====
+# ===== Команда /play =====
 @app.on_message(filters.command("play") & filters.group)
 async def play(_, msg):
     if len(msg.command) < 2:
-        await msg.reply("Используй: /play название")
+        await msg.reply("/play название песни")
         return
 
-    q = " ".join(msg.command[1:])
-    m = await msg.reply("🔄 качаю...")
+    query = " ".join(msg.command[1:])
+    status_msg = await msg.reply("🔄 Загружаю трек...")
 
     try:
-        file = await download(q)
+        file = await download_audio(query)
     except Exception as e:
-        await m.edit(f"❌ ошибка загрузки: {e}")
+        await status_msg.edit(f"❌ Ошибка загрузки: {e}")
         return
 
     await ensure_started()
-
-    chat = msg.chat.id
+    chat_id = msg.chat.id
 
     try:
-        if not vc.is_connected(chat):
-            await vc.join_call(chat)
+        if not vc.is_connected(chat_id):
+            print("▶️ Подключение к войсу...")
+            await vc.join_call(chat_id)
+            await asyncio.sleep(3)  # задержка для стабильности
     except Exception as e:
-        await m.edit(f"❌ войс ошибка: {e}")
+        await status_msg.edit(f"❌ Ошибка подключения: {e}")
         return
 
     try:
-        await vc.play(chat, file)
-        await m.edit(f"🎵 играет: {q}")
+        print("▶️ Воспроизведение...")
+        await vc.play(chat_id, file)
+        await status_msg.edit(f"🎵 Играет: {query}")
     except Exception as e:
-        await m.edit(f"❌ play ошибка: {e}")
+        await status_msg.edit(f"❌ Ошибка воспроизведения: {e}")
 
-
-# ===== stop =====
+# ===== Команда /stop =====
 @app.on_message(filters.command("stop") & filters.group)
 async def stop(_, msg):
-    chat = msg.chat.id
+    chat_id = msg.chat.id
 
-    if vc.is_connected(chat):
-        await vc.stop_playback(chat)
-        await vc.leave_call(chat)
-        await msg.reply("⏹ остановлено")
+    if vc.is_connected(chat_id):
+        await vc.stop_playback(chat_id)
+        await vc.leave_call(chat_id)
+        await msg.reply("⏹ Воспроизведение остановлено")
     else:
-        await msg.reply("не в войсе")
+        await msg.reply("❌ Я не в голосовом чате")
 
-
-print("🚀 старт")
+# ===== Запуск бота =====
+print("🚀 Бот стартует...")
 app.run()
