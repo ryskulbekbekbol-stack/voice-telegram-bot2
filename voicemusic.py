@@ -11,18 +11,18 @@ API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION_STRING = os.environ.get("SESSION_STRING")
 
-# Проверка наличия ffmpeg и nodejs (для отладки)
+# Проверка наличия ffmpeg и nodejs
 try:
     subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True)
     print("✅ FFmpeg установлен")
-except Exception:
-    print("⚠️ FFmpeg не найден. Убедитесь, что он установлен в контейнере.")
+except:
+    print("⚠️ FFmpeg не найден")
 
 try:
-    subprocess.run(['node', '--version'], check=True, capture_output=True)
-    print("✅ Node.js установлен")
-except Exception:
-    print("⚠️ Node.js не найден. Установите его в Dockerfile.")
+    node_version = subprocess.run(['node', '--version'], check=True, capture_output=True, text=True)
+    print(f"✅ Node.js установлен: {node_version.stdout.strip()}")
+except:
+    print("⚠️ Node.js не найден")
 
 # ========== ИНИЦИАЛИЗАЦИЯ КЛИЕНТА И TgCaller ==========
 app = Client(
@@ -46,25 +46,23 @@ async def ensure_vc_started():
 
 # ========== ФУНКЦИЯ СКАЧИВАНИЯ АУДИО С YouTube ==========
 def download_audio(query):
-    """
-    Скачивает аудио с YouTube. Использует клиент android для обхода ограничений.
-    """
     print(f"Начинаю скачивание: {query}")
     print(f"cookies.txt существует: {os.path.exists('cookies.txt')}")
 
     ydl_opts = {
-        'format': 'bestaudio*',                     # Лучший доступный аудиоформат
+        'format': 'bestaudio*',
         'outtmpl': 'audio.%(ext)s',
-        'cookiefile': 'cookies.txt',                # Куки для авторизации
+        'cookiefile': 'cookies.txt',
         'quiet': False,
-        'verbose': True,                             # Подробный вывод для отладки
+        'verbose': True,
         'no_warnings': False,
         'ignoreerrors': True,
         'extract_flat': False,
         'nocheckcertificate': True,
         'prefer_ffmpeg': True,
-        'source_address': '0.0.0.0',                 # Принудительный IPv4
-        'extractor_args': {'youtube': {'player_client': ['android']}},  # Ключевой момент!
+        'source_address': '0.0.0.0',
+        # Пробуем несколько клиентов, поддерживающих куки
+        'extractor_args': {'youtube': {'player_client': ['web', 'ios', 'android']}},
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
     }
 
@@ -73,20 +71,15 @@ def download_audio(query):
             info = ydl.extract_info(query, download=True)
             if info is None:
                 raise Exception("yt-dlp не смог получить информацию о видео")
-
             filename = ydl.prepare_filename(info)
-
-            # Если файл не найден, ищем audio.*
             if not os.path.exists(filename):
                 files = glob.glob("audio.*")
                 if files:
                     filename = files[0]
                 else:
                     raise FileNotFoundError("Не удалось найти скачанный файл")
-
             print(f"✅ Скачано: {filename}, размер: {os.path.getsize(filename)} байт")
             return filename
-
     except Exception as e:
         print(f"❌ Ошибка в yt-dlp: {e}")
         raise
