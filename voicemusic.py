@@ -2,6 +2,7 @@ import os
 import asyncio
 import yt_dlp
 import subprocess
+import glob
 from pyrogram import Client, filters
 from tgcaller import TgCaller
 
@@ -40,31 +41,51 @@ async def ensure_vc_started():
 # ========== ФУНКЦИЯ СКАЧИВАНИЯ АУДИО С YouTube ==========
 def download_audio(query):
     """
-    Скачивает аудио с YouTube (по ссылке или поисковому запросу).
-    Использует файл cookies.txt для обхода блокировок.
+    Скачивает аудио с YouTube. Использует формат worstaudio (самый надёжный).
     """
     print(f"Начинаю скачивание: {query}")
+    print("Проверка наличия cookies.txt:", os.path.exists('cookies.txt'))
+
     ydl_opts = {
-        'format': 'bestaudio*',                     # наиболее совместимый формат
+        'format': 'worstaudio/worst',          # самый надёжный формат
         'outtmpl': 'audio.%(ext)s',
-        'cookiefile': 'cookies.txt',                # файл с куками должен лежать рядом
-        'quiet': False,
+        'cookiefile': 'cookies.txt',           # файл с куками
+        'quiet': False,                         # подробный вывод для отладки
         'no_warnings': False,
         'extract_flat': False,
+        'force_generic_extractor': True,        # пробовать общий извлекатель
+        'ignoreerrors': True,                    # не останавливаться при ошибках
+        'no_color': True,
+        'prefer_ffmpeg': True,                   # использовать ffmpeg для слияния
+        'keepvideo': False,                       # не сохранять видео
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(query, download=True)
-        filename = ydl.prepare_filename(info)
-        # Если файл не найден (например, расширение изменилось), ищем audio.*
-        if not os.path.exists(filename):
-            import glob
-            files = glob.glob("audio.*")
-            if files:
-                filename = files[0]
-            else:
-                raise FileNotFoundError("Не удалось найти скачанный файл")
-        print(f"✅ Скачано: {filename}, размер: {os.path.getsize(filename)} байт")
-        return filename
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=True)
+            if info is None:
+                raise Exception("yt-dlp вернул None")
+
+            filename = ydl.prepare_filename(info)
+
+            # Если файл не найден (например, расширение изменилось), ищем audio.*
+            if not os.path.exists(filename):
+                files = glob.glob("audio.*")
+                if files:
+                    filename = files[0]
+                else:
+                    # Попробуем получить имя из info
+                    if 'requested_downloads' in info and info['requested_downloads']:
+                        filename = info['requested_downloads'][0].get('filepath', '')
+                    if not filename or not os.path.exists(filename):
+                        raise FileNotFoundError("Не удалось найти скачанный файл")
+
+            print(f"✅ Скачано: {filename}, размер: {os.path.getsize(filename)} байт")
+            return filename
+
+    except Exception as e:
+        print(f"❌ Ошибка в yt-dlp: {e}")
+        raise
 
 # ========== ОБРАБОТЧИК КОМАНДЫ /play ==========
 @app.on_message(filters.command("play") & (filters.group | filters.channel))
