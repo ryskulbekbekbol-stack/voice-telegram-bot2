@@ -1,4 +1,4 @@
-pyrogram==2.0.106
-tgcaller>=1.1.0
-yt-dlp==2025.02.19
 numpy==1.26.4
+pyrogram==2.0.106
+tgcaller==1.0.3
+yt-dlp==2025.02.19
