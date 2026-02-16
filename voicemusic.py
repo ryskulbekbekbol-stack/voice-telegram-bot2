@@ -32,22 +32,11 @@ async def ensure_vc_started():
 # ========== СПИСОК API ДЛЯ КОНВЕРТАЦИИ ==========
 API_LIST = [
     {
-        'name': 'y2mate',
-        'url': 'https://y2mate.guru/api/convert',
+        'name': 'loader.to',
+        'url': 'https://loader.to/api/convert/',
         'params': {'url': None, 'format': 'mp3'},
-        'file_field': 'file'  # поле в ответе с URL файла
-    },
-    {
-        'name': 'savemp3',
-        'url': 'https://savemp3.cc/api/v1',
-        'params': {'url': None, 'format': 'mp3'},
-        'file_field': 'url'
-    },
-    {
-        'name': 'ytdl.uno',  # оставим на случай, если заработает
-        'url': 'https://api.ytdl.uno/download',
-        'params': {'url': None, 'format': 'mp3', 'quality': '128'},
-        'file_field': None  # прямой файл
+        'file_field': 'downloadUrl'  # предположительно
+
     }
 ]
 
