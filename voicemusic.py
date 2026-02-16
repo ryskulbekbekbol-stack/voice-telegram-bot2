@@ -3,15 +3,22 @@ import asyncio
 import yt_dlp
 import subprocess
 import glob
+import random
 from pyrogram import Client, filters
 from tgcaller import TgCaller
 
-# ========== НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ==========
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION_STRING = os.environ.get("SESSION_STRING")
 
-# ========== ПРОВЕРКА СИСТЕМНЫХ ЗАВИСИМОСТЕЙ ==========
+# Список прокси (замените на рабочие, если нужно)
+PROXY_LIST = [
+    'http://65.108.159.129',
+    'http://216.229.112.25',
+    'http://147.75.34.105',
+    'http://94.176.3.109',
+]
+
 def check_dependencies():
     deps_ok = True
     try:
@@ -23,19 +30,15 @@ def check_dependencies():
     try:
         node_v = subprocess.run(['node', '--version'], check=True, capture_output=True, text=True)
         print(f"✅ Node.js установлен: {node_v.stdout.strip()}")
+        # Дополнительно выведем путь
+        node_path = subprocess.run(['which', 'node'], capture_output=True, text=True)
+        print(f"   Путь: {node_path.stdout.strip()}")
     except:
         print("❌ Node.js не найден")
         deps_ok = False
     return deps_ok
 
-# ========== ИНИЦИАЛИЗАЦИЯ КЛИЕНТА И TgCaller ==========
-app = Client(
-    "userbot",
-    session_string=SESSION_STRING,
-    api_id=API_ID,
-    api_hash=API_HASH,
-    in_memory=True
-)
+app = Client("userbot", session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH, in_memory=True)
 vc = TgCaller(app)
 
 _vc_started = False
@@ -48,30 +51,26 @@ async def ensure_vc_started():
         _vc_started = True
         print("✅ TgCaller запущен")
 
-# ========== ФУНКЦИЯ СКАЧИВАНИЯ АУДИО С YouTube ==========
 def download_audio(query):
     print(f"\n=== Начинаю скачивание: {query} ===")
-    print(f"cookies.txt существует: {os.path.exists('cookies.txt')}")
 
-    # Настройки yt-dlp – максимальная совместимость
     ydl_opts = {
-        'format': 'bestaudio*',                     # Лучший доступный аудиоформат
-        'outtmpl': 'audio.%(ext)s',                  # Шаблон имени файла
-        'cookiefile': 'cookies.txt',                 # Куки для авторизации
+        'format': 'bestaudio*',                     # или 'worstaudio', если нужно
+        'outtmpl': 'audio.%(ext)s',
+        'cookiefile': 'cookies.txt',
         'quiet': False,
-        'verbose': True,                              # Подробный вывод (для диагностики)
+        'verbose': True,
         'no_warnings': False,
         'ignoreerrors': True,
         'extract_flat': False,
         'nocheckcertificate': True,
         'prefer_ffmpeg': True,
-        'source_address': '0.0.0.0',                  # Принудительный IPv4
-        # Пробуем несколько клиентов (web поддерживает куки)
-        'extractor_args': {'youtube': {'player_client': ['web', 'android', 'ios', 'tv']}},
-        # Если ваш IP заблокирован – раскомментируйте и укажите рабочий прокси
-        # 'proxy': 'http://65.108.159.129',
+        'source_address': '0.0.0.0',
+        # Принудительно указываем использовать Node.js
+        'js_runtime': 'node',
+        # В extractor_args добавляем js_runner
+        'extractor_args': {'youtube': {'player_client': ['web', 'android', 'ios', 'tv'], 'js_runner': 'node'}},
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        # Дополнительные заголовки как у браузера
         'headers': {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-us,en;q=0.5',
@@ -79,32 +78,51 @@ def download_audio(query):
         }
     }
 
+    # Пробуем прокси (если есть)
+    if PROXY_LIST:
+        random.shuffle(PROXY_LIST)
+        for proxy in PROXY_LIST:
+            print(f"🔄 Пробую прокси: {proxy}")
+            ydl_opts['proxy'] = proxy
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(query, download=True)
+                    if info is None:
+                        raise Exception("yt-dlp вернул None")
+                    filename = ydl.prepare_filename(info)
+                    if not os.path.exists(filename):
+                        files = glob.glob("audio.*")
+                        if files:
+                            filename = files[0]
+                        else:
+                            raise FileNotFoundError("Не удалось найти скачанный файл")
+                    print(f"✅ Скачано: {filename}, размер: {os.path.getsize(filename)} байт (прокси: {proxy})")
+                    return filename
+            except Exception as e:
+                print(f"❌ Прокси {proxy} не сработал: {e}")
+                continue
+
+    # Если прокси не сработали или их нет, пробуем без прокси
+    print("🔄 Пробую без прокси...")
+    ydl_opts.pop('proxy', None)
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Извлекаем информацию и скачиваем
             info = ydl.extract_info(query, download=True)
             if info is None:
-                raise Exception("yt-dlp вернул None (информация не получена)")
-
-            # Получаем имя скачанного файла
+                raise Exception("yt-dlp вернул None")
             filename = ydl.prepare_filename(info)
             if not os.path.exists(filename):
-                # Иногда расширение может отличаться – ищем по маске
                 files = glob.glob("audio.*")
                 if files:
                     filename = files[0]
                 else:
                     raise FileNotFoundError("Не удалось найти скачанный файл")
-
-            file_size = os.path.getsize(filename)
-            print(f"✅ Скачано: {filename}, размер: {file_size} байт")
+            print(f"✅ Скачано без прокси: {filename}, размер: {os.path.getsize(filename)} байт")
             return filename
-
     except Exception as e:
-        print(f"❌ Ошибка в yt-dlp: {e}")
+        print(f"❌ Ошибка без прокси: {e}")
         raise
 
-# ========== КОМАНДА /play ==========
 @app.on_message(filters.command("play") & (filters.group | filters.channel))
 async def play_music(client, message):
     if len(message.command) < 2:
@@ -114,13 +132,11 @@ async def play_music(client, message):
     query = message.command[1]
     status = await message.reply("🔄 Загружаю...")
 
-    # Сначала проверяем зависимости
     if not check_dependencies():
-        await status.edit("❌ Отсутствуют системные зависимости (ffmpeg/nodejs). Проверьте Dockerfile.")
+        await status.edit("❌ Отсутствуют системные зависимости (ffmpeg/nodejs).")
         return
 
     try:
-        # Скачивание в отдельном потоке
         filename = await asyncio.get_event_loop().run_in_executor(None, download_audio, query)
     except Exception as e:
         await status.edit(f"❌ Ошибка загрузки: {e}")
@@ -160,7 +176,6 @@ async def play_music(client, message):
         except:
             pass
 
-# ========== КОМАНДА /stop ==========
 @app.on_message(filters.command("stop") & (filters.group | filters.channel))
 async def stop_music(client, message):
     chat_id = message.chat.id
@@ -171,14 +186,12 @@ async def stop_music(client, message):
     else:
         await message.reply("❌ Я не в голосовом чате.")
 
-# ========== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ИСКЛЮЧЕНИЙ ==========
 def exception_handler(loop, context):
-    print(f"⚠️ Поймано исключение в цикле событий: {context}")
+    print(f"⚠️ Поймано исключение: {context}")
 
 loop = asyncio.get_event_loop()
 loop.set_exception_handler(exception_handler)
 
-# ========== ЗАПУСК ==========
 if __name__ == "__main__":
     print("🚀 Бот запускается...")
     app.run()
