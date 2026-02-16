@@ -11,14 +11,14 @@ API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 SESSION_STRING = os.environ.get("SESSION_STRING")
 
-# Проверка наличия ffmpeg
+# Проверка ffmpeg
 try:
     subprocess.run(['ffmpeg', '-version'], check=True, capture_output=True)
     print("✅ FFmpeg установлен")
 except Exception:
     print("⚠️ FFmpeg не найден. Убедитесь, что он установлен в контейнере.")
 
-# ========== ИНИЦИАЛИЗАЦИЯ КЛИЕНТА И TgCaller ==========
+# ========== ИНИЦИАЛИЗАЦИЯ ==========
 app = Client(
     "userbot",
     session_string=SESSION_STRING,
@@ -38,56 +38,75 @@ async def ensure_vc_started():
         _vc_started = True
         print("✅ TgCaller запущен")
 
-# ========== ФУНКЦИЯ СКАЧИВАНИЯ АУДИО С YouTube ==========
+# ========== ФУНКЦИЯ СКАЧИВАНИЯ ==========
 def download_audio(query):
     """
-    Скачивает аудио с YouTube. Использует формат worstaudio (самый надёжный).
+    Скачивает аудио с YouTube. Использует максимально совместимые настройки.
     """
     print(f"Начинаю скачивание: {query}")
-    print("Проверка наличия cookies.txt:", os.path.exists('cookies.txt'))
+    print(f"Файл cookies.txt существует: {os.path.exists('cookies.txt')}")
 
     ydl_opts = {
-        'format': 'worstaudio/worst',          # самый надёжный формат
+        # Пробуем разные форматы в порядке приоритета
+        'format': 'worstaudio/worst',
         'outtmpl': 'audio.%(ext)s',
-        'cookiefile': 'cookies.txt',           # файл с куками
-        'quiet': False,                         # подробный вывод для отладки
+        'cookiefile': 'cookies.txt',
+        'quiet': False,
         'no_warnings': False,
-        'extract_flat': False,
-        'force_generic_extractor': True,        # пробовать общий извлекатель
-        'ignoreerrors': True,                    # не останавливаться при ошибках
+        'ignoreerrors': True,
         'no_color': True,
-        'prefer_ffmpeg': True,                   # использовать ffmpeg для слияния
-        'keepvideo': False,                       # не сохранять видео
+        'extract_flat': False,
+        'force_generic_extractor': False,
+        'nocheckcertificate': True,
+        'prefer_ffmpeg': True,
+        # Добавляем User-Agent чтобы не блокировали
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        # Добавляем заголовки как у браузера
+        'headers': {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+            'Sec-Fetch-Mode': 'navigate',
+        }
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=True)
+            # Сначала получаем информацию
+            info = ydl.extract_info(query, download=False)
             if info is None:
-                raise Exception("yt-dlp вернул None")
+                # Если не получилось, пробуем другой подход
+                print("Первая попытка не удалась, пробуем с extract_flat=True...")
+                ydl_opts['extract_flat'] = True
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
+                    info = ydl2.extract_info(query, download=False)
+                    if info is None:
+                        raise Exception("yt-dlp не смог получить информацию о видео")
 
-            filename = ydl.prepare_filename(info)
+            # Теперь скачиваем
+            ydl_opts['extract_flat'] = False
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl3:
+                info = ydl3.extract_info(query, download=True)
+                if info is None:
+                    raise Exception("yt-dlp вернул None при скачивании")
 
-            # Если файл не найден (например, расширение изменилось), ищем audio.*
-            if not os.path.exists(filename):
-                files = glob.glob("audio.*")
-                if files:
-                    filename = files[0]
-                else:
-                    # Попробуем получить имя из info
-                    if 'requested_downloads' in info and info['requested_downloads']:
-                        filename = info['requested_downloads'][0].get('filepath', '')
-                    if not filename or not os.path.exists(filename):
+                filename = ydl3.prepare_filename(info)
+
+                # Если файл не найден, ищем audio.*
+                if not os.path.exists(filename):
+                    files = glob.glob("audio.*")
+                    if files:
+                        filename = files[0]
+                    else:
                         raise FileNotFoundError("Не удалось найти скачанный файл")
 
-            print(f"✅ Скачано: {filename}, размер: {os.path.getsize(filename)} байт")
-            return filename
+                print(f"✅ Скачано: {filename}, размер: {os.path.getsize(filename)} байт")
+                return filename
 
     except Exception as e:
         print(f"❌ Ошибка в yt-dlp: {e}")
         raise
 
-# ========== ОБРАБОТЧИК КОМАНДЫ /play ==========
+# ========== КОМАНДА /play ==========
 @app.on_message(filters.command("play") & (filters.group | filters.channel))
 async def play_music(client, message):
     print(f"Команда play в чате {message.chat.id} от {message.from_user.id}")
@@ -99,7 +118,6 @@ async def play_music(client, message):
     query = message.command[1]
     status = await message.reply("🔄 Загружаю...")
 
-    # 1. Скачиваем аудио
     try:
         filename = await asyncio.get_event_loop().run_in_executor(None, download_audio, query)
     except Exception as e:
@@ -107,7 +125,6 @@ async def play_music(client, message):
         await status.edit(f"❌ Ошибка загрузки: {e}")
         return
 
-    # 2. Убеждаемся, что TgCaller запущен
     try:
         await ensure_vc_started()
     except Exception as e:
@@ -121,7 +138,6 @@ async def play_music(client, message):
 
     chat_id = message.chat.id
 
-    # 3. Подключаемся к голосовому чату, если ещё не подключены
     try:
         if not vc.is_connected(chat_id):
             print(f"Подключаюсь к чату {chat_id}")
@@ -136,7 +152,6 @@ async def play_music(client, message):
             pass
         return
 
-    # 4. Воспроизводим
     try:
         print(f"Воспроизвожу {filename}")
         await vc.play(chat_id, filename)
@@ -150,7 +165,7 @@ async def play_music(client, message):
         except:
             pass
 
-# ========== ОБРАБОТЧИК КОМАНДЫ /stop ==========
+# ========== КОМАНДА /stop ==========
 @app.on_message(filters.command("stop") & (filters.group | filters.channel))
 async def stop_music(client, message):
     chat_id = message.chat.id
@@ -161,9 +176,9 @@ async def stop_music(client, message):
     else:
         await message.reply("❌ Я не в голосовом чате.")
 
-# ========== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ИСКЛЮЧЕНИЙ ==========
+# ========== ОБРАБОТЧИК ОШИБОК ==========
 def exception_handler(loop, context):
-    print(f"Поймано исключение в цикле событий: {context}")
+    print(f"Поймано исключение: {context}")
 
 loop = asyncio.get_event_loop()
 loop.set_exception_handler(exception_handler)
