@@ -86,10 +86,17 @@ async def play(_, msg):
     chat_id = msg.chat.id
 
     try:
+        # принудительно получить чат, чтобы избежать KeyError
+        await app.get_chat(chat_id)
+    except Exception as e:
+        await status_msg.edit(f"❌ Не удалось получить чат: {e}")
+        return
+
+    try:
         if not vc.is_connected(chat_id):
-            print("▶️ Подключение к войсу...")
+            print("▶️ Подключение к голосовому чату...")
             await vc.join_call(chat_id)
-            await asyncio.sleep(3)  # задержка для стабильности
+            await asyncio.sleep(3)  # задержка для стабильности звука
     except Exception as e:
         await status_msg.edit(f"❌ Ошибка подключения: {e}")
         return
