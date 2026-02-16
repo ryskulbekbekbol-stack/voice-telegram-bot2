@@ -12,7 +12,6 @@ app = Client("userbot", session_string=SESSION_STRING, api_id=API_ID, api_hash=A
 vc = TgCaller(app)
 
 def download_audio(query):
-    """Скачивает аудио с YouTube и возвращает имя файла"""
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'audio.%(ext)s',
@@ -22,7 +21,6 @@ def download_audio(query):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=True)
         filename = ydl.prepare_filename(info)
-        # Если файл не найден, ищем по маске audio.*
         if not os.path.exists(filename):
             import glob
             files = glob.glob("audio.*")
@@ -41,23 +39,18 @@ async def play_music(client, message):
     status = await message.reply("🔄 Загружаю...")
     
     try:
-        # Скачивание в отдельном потоке, чтобы не блокировать асинхронность
         filename = await asyncio.get_event_loop().run_in_executor(None, download_audio, query)
     except Exception as e:
         return await status.edit(f"❌ Ошибка загрузки: {e}")
     
-    # Подключаемся к голосовому чату, если ещё не подключены
-    if not vc.is_connected(message.chat.id):
+    chat_id = message.chat.id  # всегда берём ID из текущего сообщения
+    if not vc.is_connected(chat_id):
         try:
-            await vc.join_call(message.chat.id)
+            await vc.join_call(chat_id)
         except Exception as e:
             return await status.edit(f"❌ Не удалось подключиться: {e}")
     
-    # Воспроизводим
-    await vc.play(message.chat.id, filename)
+    await vc.play(chat_id, filename)
     await status.edit(f"🎵 Играет: {query}")
-    
-    # Можно добавить удаление файла после воспроизведения (но это сложнее, требует событий)
-    # Пока оставим как есть – файл останется, но при следующем запросе перезапишется
 
 app.run()
