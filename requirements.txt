@@ -1,6 +1,5 @@
 pyrogram==2.0.106
 tgcaller==1.0.3
 yt-dlp
-spotipy==2.23.0
 tgcrypto==1.2.5
-aiohttp==3.9.5
+yt-dlp-ejs
